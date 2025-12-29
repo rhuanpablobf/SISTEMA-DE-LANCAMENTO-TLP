@@ -62,6 +62,23 @@ async def startup_db_check():
                         conn.execute(text(f"ALTER TABLE tlp.tlp_parametros ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
                     except Exception as e:
                         print(f"Migration warning for {col_name}: {e}")
+            
+            # 2. Corrigir tipos das colunas (para evitar Overflow de Numeric(10,2))
+            with conn.begin():
+                alter_cols = [
+                    ("custo_tlp_base", "NUMERIC(18, 2)"),
+                    ("limite_min_base", "NUMERIC(18, 2)"),
+                    ("limite_max_base", "NUMERIC(18, 2)"),
+                    ("limite_min_atualizado", "NUMERIC(18, 2)"),
+                    ("limite_max_atualizado", "NUMERIC(18, 2)")
+                ]
+                for col, dtype in alter_cols:
+                    try:
+                        # Postgres syntax strict
+                        conn.execute(text(f"ALTER TABLE tlp.tlp_parametros ALTER COLUMN {col} TYPE {dtype}"))
+                    except Exception as ex:
+                        print(f"Type Fix Warning {col}: {ex}")
+
             print("DB Migration checks completed.")
     except Exception as e:
         print(f"Startup DB Migration failed: {e}")
