@@ -23,13 +23,22 @@ export default function SimulacoesPage() {
     // Form State - Campos de Simulação + Parâmetros
     const [exercicio, setExercicio] = useState(new Date().getFullYear() + 1);
     const [descricao, setDescricao] = useState('');
-    const [custo, setCusto] = useState<number>(0);
+    const [custo, setCusto] = useState<number>(225000000); // Custo base da lei
     const [ipca, setIpca] = useState<number>(0);
-    const [subsidio, setSubsidio] = useState<number>(0);
-    const [limiteMinBase, setLimiteMinBase] = useState<number>(0);
-    const [limiteMaxBase, setLimiteMaxBase] = useState<number>(0);
-    const [limiteMinAtualizado, setLimiteMinAtualizado] = useState<number>(0);
-    const [limiteMaxAtualizado, setLimiteMaxAtualizado] = useState<number>(0);
+    const [subsidio, setSubsidio] = useState<number>(65); // Subsídio padrão
+    // Valores Base da Lei (2025)
+    const [limiteMinBase, setLimiteMinBase] = useState<number>(258);
+    const [limiteMaxBase, setLimiteMaxBase] = useState<number>(1600.08);
+    // Valores Atualizados (calculados automaticamente)
+    const [limiteMinAtualizado, setLimiteMinAtualizado] = useState<number>(258);
+    const [limiteMaxAtualizado, setLimiteMaxAtualizado] = useState<number>(1600.08);
+
+    // EFEITO: Recalcula valores atualizados quando IPCA ou Base mudam
+    useEffect(() => {
+        const fator = 1 + (ipca / 100);
+        setLimiteMinAtualizado(Number((limiteMinBase * fator).toFixed(2)));
+        setLimiteMaxAtualizado(Number((limiteMaxBase * fator).toFixed(2)));
+    }, [ipca, limiteMinBase, limiteMaxBase]);
 
     const loadList = async () => {
         try {
@@ -62,13 +71,13 @@ export default function SimulacoesPage() {
             });
             setShowForm(false);
             setDescricao('');
-            setCusto(0);
+            setCusto(225000000);
             setIpca(0);
-            setSubsidio(0);
-            setLimiteMinBase(0);
-            setLimiteMaxBase(0);
-            setLimiteMinAtualizado(0);
-            setLimiteMaxAtualizado(0);
+            setSubsidio(65);
+            setLimiteMinBase(258);
+            setLimiteMaxBase(1600.08);
+            setLimiteMinAtualizado(258);
+            setLimiteMaxAtualizado(1600.08);
             loadList();
         } catch (err: any) {
             alert('Erro ao criar simulação: ' + (err?.response?.data?.detail || err.message));
@@ -163,37 +172,41 @@ export default function SimulacoesPage() {
                                 <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
                                     <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>Limites de Valor (R$)</h4>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                            <Input
-                                                label="Mínimo Base"
-                                                type="number"
-                                                step="0.01"
-                                                value={limiteMinBase}
-                                                onChange={e => setLimiteMinBase(Number(e.target.value))}
-                                            />
-                                            <Input
-                                                label="Máximo Base"
-                                                type="number"
-                                                step="0.01"
-                                                value={limiteMaxBase}
-                                                onChange={e => setLimiteMaxBase(Number(e.target.value))}
-                                            />
+                                        <div>
+                                            <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Valores Base (Lei 2025)</p>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                                <Input
+                                                    label="Mínimo Base"
+                                                    type="number"
+                                                    step="0.01"
+                                                    value={limiteMinBase}
+                                                    onChange={e => setLimiteMinBase(Number(e.target.value))}
+                                                />
+                                                <Input
+                                                    label="Máximo Base"
+                                                    type="number"
+                                                    step="0.01"
+                                                    value={limiteMaxBase}
+                                                    onChange={e => setLimiteMaxBase(Number(e.target.value))}
+                                                />
+                                            </div>
                                         </div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                            <Input
-                                                label="Mínimo Atualizado"
-                                                type="number"
-                                                step="0.01"
-                                                value={limiteMinAtualizado}
-                                                onChange={e => setLimiteMinAtualizado(Number(e.target.value))}
-                                            />
-                                            <Input
-                                                label="Máximo Atualizado"
-                                                type="number"
-                                                step="0.01"
-                                                value={limiteMaxAtualizado}
-                                                onChange={e => setLimiteMaxAtualizado(Number(e.target.value))}
-                                            />
+                                        <div>
+                                            <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--primary-600)', marginBottom: '0.5rem' }}>Valores Atualizados (Calculado = Base × IPCA)</p>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                                <div style={{ padding: '0.75rem', backgroundColor: 'var(--primary-50)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--primary-200)' }}>
+                                                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Mínimo Atualizado</p>
+                                                    <p style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--primary-700)' }}>
+                                                        {limiteMinAtualizado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                    </p>
+                                                </div>
+                                                <div style={{ padding: '0.75rem', backgroundColor: 'var(--primary-50)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--primary-200)' }}>
+                                                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Máximo Atualizado</p>
+                                                    <p style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--primary-700)' }}>
+                                                        {limiteMaxAtualizado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                    </p>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
