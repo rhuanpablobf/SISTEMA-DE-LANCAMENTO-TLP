@@ -20,25 +20,45 @@ export default function SimulacoesPage() {
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
 
-    // Form State - Campos de Simulação + Parâmetros
+    // Form State
     const [exercicio, setExercicio] = useState(new Date().getFullYear() + 1);
     const [descricao, setDescricao] = useState('');
-    const [custo, setCusto] = useState<number>(225000000); // Custo base da lei
-    const [ipca, setIpca] = useState<number>(0);
-    const [subsidio, setSubsidio] = useState<number>(65); // Subsídio padrão
-    // Valores Base da Lei (2025)
-    const [limiteMinBase, setLimiteMinBase] = useState<number>(258);
-    const [limiteMaxBase, setLimiteMaxBase] = useState<number>(1600.08);
-    // Valores Atualizados (calculados automaticamente)
-    const [limiteMinAtualizado, setLimiteMinAtualizado] = useState<number>(258);
-    const [limiteMaxAtualizado, setLimiteMaxAtualizado] = useState<number>(1600.08);
 
-    // EFEITO: Recalcula valores atualizados quando IPCA ou Base mudam
+    // Parâmetros de Entrada (usuário informa)
+    const [custoBase, setCustoBase] = useState<number>(0);
+    const [ipca, setIpca] = useState<number>(0);
+    const [subsidioPerc, setSubsidioPerc] = useState<number>(65);
+
+    // VALORES FIXOS DA LEI (2025) - Não editáveis
+    const LIMITE_MIN_LEI = 258.00;
+    const LIMITE_MAX_LEI = 1600.08;
+
+    // Valores Calculados
+    const [custoAtualizado, setCustoAtualizado] = useState<number>(0);
+    const [valorSubsidio, setValorSubsidio] = useState<number>(0);
+    const [custoFinal, setCustoFinal] = useState<number>(0);
+    const [limiteMinAtualizado, setLimiteMinAtualizado] = useState<number>(LIMITE_MIN_LEI);
+    const [limiteMaxAtualizado, setLimiteMaxAtualizado] = useState<number>(LIMITE_MAX_LEI);
+
+    // EFEITO: Recalcula todos os valores derivados
     useEffect(() => {
-        const fator = 1 + (ipca / 100);
-        setLimiteMinAtualizado(Number((limiteMinBase * fator).toFixed(2)));
-        setLimiteMaxAtualizado(Number((limiteMaxBase * fator).toFixed(2)));
-    }, [ipca, limiteMinBase, limiteMaxBase]);
+        const fatorIpca = 1 + (ipca / 100);
+
+        // Custo atualizado pelo IPCA
+        const custoAtual = custoBase * fatorIpca;
+        setCustoAtualizado(Number(custoAtual.toFixed(2)));
+
+        // Valor do subsídio
+        const subsidio = custoAtual * (subsidioPerc / 100);
+        setValorSubsidio(Number(subsidio.toFixed(2)));
+
+        // Custo final após subsídio
+        setCustoFinal(Number((custoAtual - subsidio).toFixed(2)));
+
+        // Limites atualizados pelo IPCA
+        setLimiteMinAtualizado(Number((LIMITE_MIN_LEI * fatorIpca).toFixed(2)));
+        setLimiteMaxAtualizado(Number((LIMITE_MAX_LEI * fatorIpca).toFixed(2)));
+    }, [custoBase, ipca, subsidioPerc]);
 
     const loadList = async () => {
         try {
@@ -57,27 +77,31 @@ export default function SimulacoesPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (custoBase <= 0) {
+            alert('Informe o Custo TLP Base');
+            return;
+        }
         try {
             await api.post('/simulacoes', {
                 exercicio: Number(exercicio),
                 descricao,
-                custo_tlp_base: custo,
+                custo_tlp_base: custoBase,
                 ipca_percentual: ipca,
-                subsidio_percentual: subsidio,
-                limite_min_base: limiteMinBase,
-                limite_max_base: limiteMaxBase,
+                subsidio_percentual: subsidioPerc,
+                limite_min_base: LIMITE_MIN_LEI,
+                limite_max_base: LIMITE_MAX_LEI,
                 limite_min_atualizado: limiteMinAtualizado,
-                limite_max_atualizado: limiteMaxAtualizado
+                limite_max_atualizado: limiteMaxAtualizado,
+                // Campos calculados extras
+                custo_atualizado: custoAtualizado,
+                valor_subsidio: valorSubsidio,
+                custo_final: custoFinal
             });
             setShowForm(false);
             setDescricao('');
-            setCusto(225000000);
+            setCustoBase(0);
             setIpca(0);
-            setSubsidio(65);
-            setLimiteMinBase(258);
-            setLimiteMaxBase(1600.08);
-            setLimiteMinAtualizado(258);
-            setLimiteMaxAtualizado(1600.08);
+            setSubsidioPerc(65);
             loadList();
         } catch (err: any) {
             alert('Erro ao criar simulação: ' + (err?.response?.data?.detail || err.message));
@@ -106,6 +130,8 @@ export default function SimulacoesPage() {
         }
     };
 
+    const formatCurrency = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
     return (
         <div className="container-premium">
             <header style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -121,7 +147,7 @@ export default function SimulacoesPage() {
             {showForm && (
                 <div style={{ marginBottom: '2rem' }} className="fade-in">
                     <Card>
-                        <CardHeader><CardTitle>Nova Simulação</CardTitle></CardHeader>
+                        <CardHeader><CardTitle>Nova Simulação - Exercício {exercicio}</CardTitle></CardHeader>
                         <CardContent>
                             <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '1.5rem' }}>
                                 {/* Linha 1: Exercício e Descrição */}
@@ -134,22 +160,23 @@ export default function SimulacoesPage() {
                                     />
                                     <Input
                                         label="Descrição do Cenário"
-                                        placeholder="Ex: Simulação com reajuste de 10%"
+                                        placeholder="Ex: Simulação com IPCA de 4,46%"
                                         value={descricao}
                                         onChange={e => setDescricao(e.target.value)}
                                     />
                                 </div>
 
-                                {/* Seção: Parâmetros de Cálculo */}
+                                {/* Seção: Parâmetros de Entrada */}
                                 <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                                    <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>Parâmetros de Cálculo</h4>
+                                    <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>Parâmetros de Entrada</h4>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
                                         <Input
                                             label="Custo TLP Base (R$)"
                                             type="number"
                                             step="0.01"
-                                            value={custo}
-                                            onChange={e => setCusto(Number(e.target.value))}
+                                            value={custoBase || ''}
+                                            onChange={e => setCustoBase(Number(e.target.value))}
+                                            placeholder="Informe o custo"
                                         />
                                         <Input
                                             label="IPCA (%)"
@@ -162,49 +189,60 @@ export default function SimulacoesPage() {
                                             label="Subsídio (%)"
                                             type="number"
                                             step="0.01"
-                                            value={subsidio}
-                                            onChange={e => setSubsidio(Number(e.target.value))}
+                                            value={subsidioPerc}
+                                            onChange={e => setSubsidioPerc(Number(e.target.value))}
                                         />
+                                    </div>
+                                </div>
+
+                                {/* Seção: Valores Calculados */}
+                                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                                    <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--primary-600)' }}>Valores Calculados (Custo × IPCA - Subsídio)</h4>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                                        <div style={{ padding: '0.75rem', backgroundColor: 'var(--bg-body)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Custo Atualizado</p>
+                                            <p style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)' }}>{formatCurrency(custoAtualizado)}</p>
+                                        </div>
+                                        <div style={{ padding: '0.75rem', backgroundColor: 'var(--bg-body)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Valor Subsídio ({subsidioPerc}%)</p>
+                                            <p style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--danger)' }}>- {formatCurrency(valorSubsidio)}</p>
+                                        </div>
+                                        <div style={{ padding: '0.75rem', backgroundColor: 'var(--success-bg, #ecfdf5)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--success, #10b981)' }}>
+                                            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Custo Final (Após Subsídio)</p>
+                                            <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--success, #059669)' }}>{formatCurrency(custoFinal)}</p>
+                                        </div>
                                     </div>
                                 </div>
 
                                 {/* Seção: Limites */}
                                 <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                                    <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>Limites de Valor (R$)</h4>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+                                    <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>Limites de Valor por Imóvel</h4>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}>
+                                        {/* Valores Base da Lei - FIXOS */}
                                         <div>
-                                            <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Valores Base (Lei 2025)</p>
+                                            <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Valores Base (Lei 2025 - Fixos)</p>
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                                <Input
-                                                    label="Mínimo Base"
-                                                    type="number"
-                                                    step="0.01"
-                                                    value={limiteMinBase}
-                                                    onChange={e => setLimiteMinBase(Number(e.target.value))}
-                                                />
-                                                <Input
-                                                    label="Máximo Base"
-                                                    type="number"
-                                                    step="0.01"
-                                                    value={limiteMaxBase}
-                                                    onChange={e => setLimiteMaxBase(Number(e.target.value))}
-                                                />
+                                                <div style={{ padding: '0.75rem', backgroundColor: '#f1f5f9', borderRadius: 'var(--radius-sm)' }}>
+                                                    <p style={{ fontSize: '0.7rem', color: '#64748b' }}>Mínimo Base</p>
+                                                    <p style={{ fontWeight: 600 }}>{formatCurrency(LIMITE_MIN_LEI)}</p>
+                                                </div>
+                                                <div style={{ padding: '0.75rem', backgroundColor: '#f1f5f9', borderRadius: 'var(--radius-sm)' }}>
+                                                    <p style={{ fontSize: '0.7rem', color: '#64748b' }}>Máximo Base</p>
+                                                    <p style={{ fontWeight: 600 }}>{formatCurrency(LIMITE_MAX_LEI)}</p>
+                                                </div>
                                             </div>
                                         </div>
+                                        {/* Valores Atualizados - CALCULADOS */}
                                         <div>
-                                            <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--primary-600)', marginBottom: '0.5rem' }}>Valores Atualizados (Calculado = Base × IPCA)</p>
+                                            <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--primary-600)', marginBottom: '0.5rem' }}>Valores Atualizados ({exercicio}) = Base × (1 + {ipca}%)</p>
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                                                 <div style={{ padding: '0.75rem', backgroundColor: 'var(--primary-50)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--primary-200)' }}>
-                                                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Mínimo Atualizado</p>
-                                                    <p style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--primary-700)' }}>
-                                                        {limiteMinAtualizado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                                    </p>
+                                                    <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Mínimo Atualizado</p>
+                                                    <p style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--primary-700)' }}>{formatCurrency(limiteMinAtualizado)}</p>
                                                 </div>
                                                 <div style={{ padding: '0.75rem', backgroundColor: 'var(--primary-50)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--primary-200)' }}>
-                                                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Máximo Atualizado</p>
-                                                    <p style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--primary-700)' }}>
-                                                        {limiteMaxAtualizado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                                    </p>
+                                                    <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Máximo Atualizado</p>
+                                                    <p style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--primary-700)' }}>{formatCurrency(limiteMaxAtualizado)}</p>
                                                 </div>
                                             </div>
                                         </div>
@@ -231,7 +269,7 @@ export default function SimulacoesPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.25rem' }}>
-                                    <h3 style={{ fontSize: '1.125rem', fontWeight: 600 }}>{item.descricao}</h3>
+                                    <h3 style={{ fontSize: '1.125rem', fontWeight: 600 }}>{item.descricao || `Simulação ${item.exercicio}`}</h3>
                                     <span className={`px-2 py-0.5 rounded text-xs font-semibold ${statusColor(item.status)}`}>
                                         {item.status}
                                     </span>
@@ -243,7 +281,7 @@ export default function SimulacoesPage() {
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
                                 {item.status !== 'CONVERTIDO_LOTE' && (
                                     <Button variant="outline" size="sm" onClick={() => handleGerarLote(item.id_simulacao)}>
-                                        Gerar Lote
+                                        Gerar Lote Oficial
                                     </Button>
                                 )}
                                 <Button variant="outline" size="sm">Ver Detalhes</Button>
@@ -251,11 +289,11 @@ export default function SimulacoesPage() {
                         </div>
                         {/* Snapshot info */}
                         <div style={{ marginTop: '1rem', padding: '0.75rem', backgroundColor: 'var(--bg-body)', borderRadius: 'var(--radius-sm)', fontSize: '0.875rem', color: 'var(--text-secondary)', display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-                            <span>Custo Base: <strong>{Number(item.parametros_snapshot?.custo_tlp_base || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong></span>
+                            <span>Custo Base: <strong>{formatCurrency(Number(item.parametros_snapshot?.custo_tlp_base || 0))}</strong></span>
                             <span>IPCA: <strong>{item.parametros_snapshot?.ipca_percentual || 0}%</strong></span>
                             <span>Subsídio: <strong>{item.parametros_snapshot?.subsidio_percentual || 0}%</strong></span>
-                            <span>Limite Min: <strong>{Number(item.parametros_snapshot?.limite_min_atualizado || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong></span>
-                            <span>Limite Max: <strong>{Number(item.parametros_snapshot?.limite_max_atualizado || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong></span>
+                            <span>Limite Min: <strong>{formatCurrency(Number(item.parametros_snapshot?.limite_min_atualizado || 0))}</strong></span>
+                            <span>Limite Max: <strong>{formatCurrency(Number(item.parametros_snapshot?.limite_max_atualizado || 0))}</strong></span>
                         </div>
                     </Card>
                 ))}
