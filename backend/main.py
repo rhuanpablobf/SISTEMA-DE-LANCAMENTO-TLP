@@ -241,6 +241,30 @@ def get_lotes(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao buscar lotes: {str(e)}")
 
+@app.get("/lotes/ultimo/{exercicio}")
+def get_ultimo_lote(exercicio: int, db: Session = Depends(get_db)):
+    """Busca o último lote oficial de um exercício específico para usar como base para o próximo ano."""
+    try:
+        from models import TlpLoteLancamento
+        
+        lote = db.query(TlpLoteLancamento).filter(
+            TlpLoteLancamento.exercicio == exercicio
+        ).order_by(desc(TlpLoteLancamento.versao)).first()
+        
+        if not lote:
+            return None
+        
+        # Retorna os limites atualizados que servirão de base para o próximo ano
+        return {
+            "exercicio": lote.exercicio,
+            "versao": lote.versao,
+            "limite_min_atualizado": float(lote.parametros_snapshot.get("limite_min_atualizado", 0)) if lote.parametros_snapshot else 0,
+            "limite_max_atualizado": float(lote.parametros_snapshot.get("limite_max_atualizado", 0)) if lote.parametros_snapshot else 0,
+            "ipca_percentual": float(lote.parametros_snapshot.get("ipca_percentual", 0)) if lote.parametros_snapshot else 0
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar último lote: {str(e)}")
+
 @app.post("/lotes")
 def create_lote(lote: LoteCreate, db: Session = Depends(get_db)):
     """Promove uma simulação para Lote de Lançamento Oficial."""

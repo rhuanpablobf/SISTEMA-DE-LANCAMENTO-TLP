@@ -29,16 +29,58 @@ export default function SimulacoesPage() {
     const [ipca, setIpca] = useState<number>(0);
     const [subsidioPerc, setSubsidioPerc] = useState<number>(65);
 
-    // VALORES FIXOS DA LEI (2025) - Não editáveis
-    const LIMITE_MIN_LEI = 258.00;
-    const LIMITE_MAX_LEI = 1600.08;
+    // VALORES BASE DA LEI (2025) - Usados como fallback
+    const LIMITE_MIN_LEI_2025 = 258.00;
+    const LIMITE_MAX_LEI_2025 = 1600.08;
+
+    // Limites Base Dinâmicos (vem do lote anterior ou da lei)
+    const [limiteMinBase, setLimiteMinBase] = useState<number>(LIMITE_MIN_LEI_2025);
+    const [limiteMaxBase, setLimiteMaxBase] = useState<number>(LIMITE_MAX_LEI_2025);
+    const [fonteBase, setFonteBase] = useState<string>('Lei 2025');
 
     // Valores Calculados
     const [custoAtualizado, setCustoAtualizado] = useState<number>(0);
     const [valorSubsidio, setValorSubsidio] = useState<number>(0);
     const [custoFinal, setCustoFinal] = useState<number>(0);
-    const [limiteMinAtualizado, setLimiteMinAtualizado] = useState<number>(LIMITE_MIN_LEI);
-    const [limiteMaxAtualizado, setLimiteMaxAtualizado] = useState<number>(LIMITE_MAX_LEI);
+    const [limiteMinAtualizado, setLimiteMinAtualizado] = useState<number>(LIMITE_MIN_LEI_2025);
+    const [limiteMaxAtualizado, setLimiteMaxAtualizado] = useState<number>(LIMITE_MAX_LEI_2025);
+
+    // EFEITO: Busca limites do lote do ano anterior quando exercício muda
+    useEffect(() => {
+        const buscarLimiteBase = async () => {
+            const anoAnterior = exercicio - 1;
+
+            if (anoAnterior < 2025) {
+                // Para 2025 ou antes, usa valores da lei
+                setLimiteMinBase(LIMITE_MIN_LEI_2025);
+                setLimiteMaxBase(LIMITE_MAX_LEI_2025);
+                setFonteBase('Lei 2025 (Base Original)');
+                return;
+            }
+
+            try {
+                const response = await api.get(`/lotes/ultimo/${anoAnterior}`);
+                if (response.data && response.data.limite_min_atualizado) {
+                    // Usa os limites atualizados do lote do ano anterior como nova base
+                    setLimiteMinBase(response.data.limite_min_atualizado);
+                    setLimiteMaxBase(response.data.limite_max_atualizado);
+                    setFonteBase(`Lote Oficial ${anoAnterior} (v${response.data.versao})`);
+                } else {
+                    // Nenhum lote encontrado, usa valores da lei
+                    setLimiteMinBase(LIMITE_MIN_LEI_2025);
+                    setLimiteMaxBase(LIMITE_MAX_LEI_2025);
+                    setFonteBase('Lei 2025 (Sem lote anterior)');
+                }
+            } catch (err) {
+                console.error('Erro ao buscar lote anterior:', err);
+                setLimiteMinBase(LIMITE_MIN_LEI_2025);
+                setLimiteMaxBase(LIMITE_MAX_LEI_2025);
+                setFonteBase('Lei 2025 (Erro ao buscar)');
+            }
+        };
+
+        buscarLimiteBase();
+    }, [exercicio]);
 
     // EFEITO: Recalcula todos os valores derivados
     useEffect(() => {
@@ -55,10 +97,10 @@ export default function SimulacoesPage() {
         // Custo final após subsídio
         setCustoFinal(Number((custoAtual - subsidio).toFixed(2)));
 
-        // Limites atualizados pelo IPCA
-        setLimiteMinAtualizado(Number((LIMITE_MIN_LEI * fatorIpca).toFixed(2)));
-        setLimiteMaxAtualizado(Number((LIMITE_MAX_LEI * fatorIpca).toFixed(2)));
-    }, [custoBase, ipca, subsidioPerc]);
+        // Limites atualizados pelo IPCA (usando base dinâmica)
+        setLimiteMinAtualizado(Number((limiteMinBase * fatorIpca).toFixed(2)));
+        setLimiteMaxAtualizado(Number((limiteMaxBase * fatorIpca).toFixed(2)));
+    }, [custoBase, ipca, subsidioPerc, limiteMinBase, limiteMaxBase]);
 
     const loadList = async () => {
         try {
@@ -88,8 +130,8 @@ export default function SimulacoesPage() {
                 custo_tlp_base: custoBase,
                 ipca_percentual: ipca,
                 subsidio_percentual: subsidioPerc,
-                limite_min_base: LIMITE_MIN_LEI,
-                limite_max_base: LIMITE_MAX_LEI,
+                limite_min_base: limiteMinBase,
+                limite_max_base: limiteMaxBase,
                 limite_min_atualizado: limiteMinAtualizado,
                 limite_max_atualizado: limiteMaxAtualizado,
                 // Campos calculados extras
@@ -218,17 +260,19 @@ export default function SimulacoesPage() {
                                 <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
                                     <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>Limites de Valor por Imóvel</h4>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}>
-                                        {/* Valores Base da Lei - FIXOS */}
+                                        {/* Valores Base - Dinâmicos (do lote anterior ou da lei) */}
                                         <div>
-                                            <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Valores Base (Lei 2025 - Fixos)</p>
+                                            <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                                                Valores Base <span style={{ fontStyle: 'italic', fontWeight: 400 }}>({fonteBase})</span>
+                                            </p>
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                                                 <div style={{ padding: '0.75rem', backgroundColor: '#f1f5f9', borderRadius: 'var(--radius-sm)' }}>
                                                     <p style={{ fontSize: '0.7rem', color: '#64748b' }}>Mínimo Base</p>
-                                                    <p style={{ fontWeight: 600 }}>{formatCurrency(LIMITE_MIN_LEI)}</p>
+                                                    <p style={{ fontWeight: 600 }}>{formatCurrency(limiteMinBase)}</p>
                                                 </div>
                                                 <div style={{ padding: '0.75rem', backgroundColor: '#f1f5f9', borderRadius: 'var(--radius-sm)' }}>
                                                     <p style={{ fontSize: '0.7rem', color: '#64748b' }}>Máximo Base</p>
-                                                    <p style={{ fontWeight: 600 }}>{formatCurrency(LIMITE_MAX_LEI)}</p>
+                                                    <p style={{ fontWeight: 600 }}>{formatCurrency(limiteMaxBase)}</p>
                                                 </div>
                                             </div>
                                         </div>
