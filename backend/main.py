@@ -8,6 +8,7 @@ from pydantic import BaseModel
 import models
 from typing import Optional
 from decimal import Decimal
+from datetime import datetime
 import os
 
 # WORKAROUND: Fix para erro de UnicodeDecodeError no Windows quando o path do projeto tem acentos (LANÇAMENTO)
