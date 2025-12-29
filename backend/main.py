@@ -252,7 +252,15 @@ def get_ultimo_lote(exercicio: int, db: Session = Depends(get_db)):
         ).order_by(desc(TlpLoteLancamento.versao)).first()
         
         if not lote:
-            return None
+            # Retorna objeto vazio ao invés de None para evitar erros
+            return {
+                "exercicio": exercicio,
+                "versao": 0,
+                "limite_min_atualizado": 0,
+                "limite_max_atualizado": 0,
+                "ipca_percentual": 0,
+                "encontrado": False
+            }
         
         # Retorna os limites atualizados que servirão de base para o próximo ano
         return {
@@ -260,7 +268,8 @@ def get_ultimo_lote(exercicio: int, db: Session = Depends(get_db)):
             "versao": lote.versao,
             "limite_min_atualizado": float(lote.parametros_snapshot.get("limite_min_atualizado", 0)) if lote.parametros_snapshot else 0,
             "limite_max_atualizado": float(lote.parametros_snapshot.get("limite_max_atualizado", 0)) if lote.parametros_snapshot else 0,
-            "ipca_percentual": float(lote.parametros_snapshot.get("ipca_percentual", 0)) if lote.parametros_snapshot else 0
+            "ipca_percentual": float(lote.parametros_snapshot.get("ipca_percentual", 0)) if lote.parametros_snapshot else 0,
+            "encontrado": True
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao buscar último lote: {str(e)}")

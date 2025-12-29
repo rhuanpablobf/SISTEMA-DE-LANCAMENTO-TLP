@@ -60,7 +60,7 @@ export default function SimulacoesPage() {
 
             try {
                 const response = await api.get(`/lotes/ultimo/${anoAnterior}`);
-                if (response.data && response.data.limite_min_atualizado) {
+                if (response.data && response.data.encontrado && response.data.limite_min_atualizado > 0) {
                     // Usa os limites atualizados do lote do ano anterior como nova base
                     setLimiteMinBase(response.data.limite_min_atualizado);
                     setLimiteMaxBase(response.data.limite_max_atualizado);

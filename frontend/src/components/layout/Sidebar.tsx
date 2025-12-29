@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 
 const menuItems = [
     { label: 'Dashboard', href: '/' },
-    { label: 'Parâmetros', href: '/parametros' },
     { label: 'Simulações', href: '/simulacoes' },
     { label: 'Lotes de Lançamento', href: '/lotes' },
     { label: 'Auditoria', href: '/auditoria' },
