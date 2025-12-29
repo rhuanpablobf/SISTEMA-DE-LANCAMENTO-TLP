@@ -138,7 +138,13 @@ export default function SimulacoesPage() {
             try {
                 const progressRes = await api.get(`/simulacoes/${idSimulacao}/progresso`);
                 const data = progressRes.data;
-                const elapsed = Math.round((Date.now() - startTimeRef.current) / 1000);
+
+                // Usar timestamp do backend para calcular tempo decorrido real
+                let elapsed = 0;
+                if (data.inicio_processamento) {
+                    const inicio = new Date(data.inicio_processamento).getTime();
+                    elapsed = Math.round((Date.now() - inicio) / 1000);
+                }
 
                 setProgresso({
                     percentual: data.progresso_percentual || 0,

@@ -385,8 +385,11 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
         if sim.status == 'CONCLUIDO':
             raise HTTPException(status_code=400, detail="Simulação já foi processada")
         
-        # Atualiza status
+        # Atualiza status e salva timestamp de início
         sim.status = 'EM_PROCESSAMENTO'
+        params = dict(sim.parametros_snapshot or {})
+        params['inicio_processamento'] = datetime.now().isoformat()
+        sim.parametros_snapshot = params
         db.commit()
         
         # 2. Extrair parâmetros do snapshot
@@ -559,7 +562,8 @@ def get_progresso_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
             "concluido": sim.status == 'CONCLUIDO',
             "erro": sim.status == 'ERRO',
             "erro_mensagem": params.get('erro_mensagem', None),
-            "erro_timestamp": params.get('erro_timestamp', None)
+            "erro_timestamp": params.get('erro_timestamp', None),
+            "inicio_processamento": params.get('inicio_processamento', None)
         }
         
     except HTTPException:
