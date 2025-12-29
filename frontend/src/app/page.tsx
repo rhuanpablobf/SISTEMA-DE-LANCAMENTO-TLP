@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import axios from 'axios';
+import api from '@/services/api';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -19,7 +19,7 @@ export default function Home() {
     setDados(null);
 
     try {
-      const response = await axios.get(`http://localhost:8000/imoveis/${inscricao}`);
+      const response = await api.get(`/imoveis/${inscricao}`);
       setDados(response.data);
     } catch (err) {
       setErro('Imóvel não encontrado ou erro na comunicação. Verifique a inscrição.');

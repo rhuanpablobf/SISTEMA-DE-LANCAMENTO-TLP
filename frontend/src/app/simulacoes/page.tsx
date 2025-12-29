@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '@/services/api';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -26,7 +26,7 @@ export default function SimulacoesPage() {
 
     const loadList = async () => {
         try {
-            const response = await axios.get('http://localhost:8000/simulacoes');
+            const response = await api.get('/simulacoes');
             setList(response.data);
         } catch (err) {
             console.error(err);
@@ -42,7 +42,7 @@ export default function SimulacoesPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            await axios.post('http://localhost:8000/simulacoes', {
+            await api.post('/simulacoes', {
                 exercicio: Number(exercicio),
                 descricao
             });
