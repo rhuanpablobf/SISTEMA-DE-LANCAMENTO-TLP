@@ -2,8 +2,10 @@ from fastapi import FastAPI, Depends, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text, desc
-from database import get_db
+from database import get_db, Base, engine
 from pydantic import BaseModel
+# Importar models para registrar no Base.metadata
+import models
 from typing import Optional
 from decimal import Decimal
 import os
@@ -31,8 +33,19 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_db_check():
-    from database import engine
-    from sqlalchemy import text
+    # Garantir que o schema e tabelas existam
+    try:
+        with engine.connect() as conn:
+            with conn.begin():
+                conn.execute(text("CREATE SCHEMA IF NOT EXISTS tlp"))
+        
+        # Cria as tabelas se não existirem
+        Base.metadata.create_all(bind=engine)
+        print("Schema e Tabelas verificados com sucesso.")
+    except Exception as e:
+        print(f"Erro ao inicializar banco de dados: {e}")
+
+    # Migração de colunas (para tabelas existentes)
     try:
         with engine.connect() as conn:
             with conn.begin():
