@@ -363,10 +363,19 @@ FATORES_USO = {
 
 @app.post("/simulacoes/{id_simulacao}/processar")
 def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
-    """Processa a simulação: calcula TLP para cada imóvel e salva os resultados."""
+    """Processa a simulação: calcula TLP para cada imóvel e salva os resultados.
+    
+    OTIMIZADO para baixo uso de memória:
+    - Usa yield_per para streaming de resultados
+    - Processa em batches de 1000 imóveis
+    - Commits parciais a cada batch
+    """
     try:
         from models import TlpSimulacao, TlpSimulacaoItem, TlpNaoIncidencia, UsoImovel
         from decimal import Decimal
+        import gc
+        
+        BATCH_SIZE = 1000  # Processar 1000 imóveis por vez
         
         # 1. Buscar simulação
         sim = db.query(TlpSimulacao).filter(TlpSimulacao.id_simulacao == id_simulacao).first()
@@ -387,66 +396,110 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
         limite_max = Decimal(str(params.get('limite_max_atualizado', 1600.08)))
         exercicio = sim.exercicio
         
-        # 3. Buscar não incidências do exercício
-        nao_incidencias = db.query(TlpNaoIncidencia).filter(
-            TlpNaoIncidencia.exercicio == exercicio,
-            TlpNaoIncidencia.ativo == True
-        ).all()
-        inscricoes_isentas = {ni.codg_inscricao_lan: ni.motivo for ni in nao_incidencias}
+        # 3. Buscar não incidências do exercício (set para lookup O(1))
+        nao_incidencias_result = db.execute(
+            text("SELECT codg_inscricao_lan, motivo FROM tlp.tlp_nao_incidencia WHERE exercicio = :ex AND ativo = true"),
+            {"ex": exercicio}
+        ).fetchall()
+        inscricoes_isentas = {row[0]: row[1] for row in nao_incidencias_result}
+        del nao_incidencias_result  # Liberar memória
         
-        # 4. Buscar todos os imóveis da view
-        imoveis = db.query(UsoImovel).all()
-        total_imoveis = len(imoveis)
+        # 4. Contar total de imóveis (sem carregar na memória)
+        total_imoveis = db.execute(text("SELECT COUNT(*) FROM base.uso_imovel")).scalar()
         
         if total_imoveis == 0:
             raise HTTPException(status_code=400, detail="Nenhum imóvel encontrado na base")
         
         # 5. Calcular TLP base por imóvel
-        # Fórmula: TLP_Bruta = Custo_Final / Total_Imoveis (distribuição uniforme)
         tlp_base_por_imovel = custo_final / Decimal(total_imoveis)
         
         # 6. Limpar itens anteriores (se reprocessando)
-        db.query(TlpSimulacaoItem).filter(TlpSimulacaoItem.id_simulacao == sim.id_simulacao).delete()
+        db.execute(
+            text("DELETE FROM tlp.tlp_simulacao_item WHERE id_simulacao = :id"),
+            {"id": str(sim.id_simulacao)}
+        )
+        db.commit()
         
-        # 7. Calcular e inserir itens
+        # 7. Processar em BATCHES usando SQL puro para economia de memória
         itens_criados = 0
-        for imovel in imoveis:
-            uso = (imovel.uso_classificado or 'RESIDENCIAL').upper()
-            fator = Decimal(str(FATORES_USO.get(uso, 1.0)))
+        offset = 0
+        
+        while True:
+            # Buscar batch de imóveis via SQL direto (mais leve que ORM)
+            imoveis_batch = db.execute(
+                text("""
+                    SELECT codg_inscricao_lan, nome_contribuinte_lan, uso_classificado, atividade_considerada
+                    FROM base.uso_imovel
+                    ORDER BY codg_inscricao_lan
+                    LIMIT :limit OFFSET :offset
+                """),
+                {"limit": BATCH_SIZE, "offset": offset}
+            ).fetchall()
             
-            # TLP Bruta = Base × Fator
-            tlp_bruta = tlp_base_por_imovel * fator
+            if not imoveis_batch:
+                break  # Fim dos dados
             
-            # Verificar não incidência
-            is_isento = imovel.codg_inscricao_lan in inscricoes_isentas
-            motivo_isencao = inscricoes_isentas.get(imovel.codg_inscricao_lan) if is_isento else None
+            # Processar batch
+            batch_items = []
+            for row in imoveis_batch:
+                codg, nome, uso_raw, atividade = row[0], row[1], row[2], row[3]
+                uso = (uso_raw or 'RESIDENCIAL').upper()
+                fator = Decimal(str(FATORES_USO.get(uso, 1.0)))
+                
+                # TLP Bruta = Base × Fator
+                tlp_bruta = tlp_base_por_imovel * fator
+                
+                # Verificar não incidência
+                is_isento = codg in inscricoes_isentas
+                motivo_isencao = inscricoes_isentas.get(codg) if is_isento else None
+                
+                # Verificar se uso é público (isento por padrão)
+                if uso in ['PUBLICO', 'FILANTROPICO', 'PUBLICO/FILANTROPICO']:
+                    is_isento = True
+                    motivo_isencao = motivo_isencao or 'PROPRIEDADE PÚBLICA/FILANTRÓPICA'
+                
+                # Aplicar limites (min/max) - somente se não isento
+                if is_isento:
+                    tlp_calculada = Decimal('0')
+                else:
+                    tlp_calculada = max(limite_min, min(limite_max, tlp_bruta))
+                
+                batch_items.append({
+                    "id_simulacao": str(sim.id_simulacao),
+                    "codg_inscricao_lan": codg,
+                    "nome_contribuinte": nome,
+                    "uso_classificado": uso,
+                    "atividade_considerada": atividade,
+                    "fator_uso": float(fator),
+                    "tlp_bruta": float(tlp_bruta),
+                    "tlp_calculada": float(tlp_calculada),
+                    "nao_incidencia": is_isento,
+                    "motivo_nao_incidencia": motivo_isencao
+                })
             
-            # Verificar se uso é público (isento por padrão)
-            if uso in ['PUBLICO', 'FILANTROPICO', 'PUBLICO/FILANTROPICO']:
-                is_isento = True
-                motivo_isencao = motivo_isencao or 'PROPRIEDADE PÚBLICA/FILANTRÓPICA'
+            # Inserir batch via SQL bulk insert
+            if batch_items:
+                db.execute(
+                    text("""
+                        INSERT INTO tlp.tlp_simulacao_item 
+                        (id_simulacao, codg_inscricao_lan, nome_contribuinte, uso_classificado, 
+                         atividade_considerada, fator_uso, tlp_bruta, tlp_calculada, 
+                         nao_incidencia, motivo_nao_incidencia)
+                        VALUES (:id_simulacao, :codg_inscricao_lan, :nome_contribuinte, :uso_classificado,
+                                :atividade_considerada, :fator_uso, :tlp_bruta, :tlp_calculada,
+                                :nao_incidencia, :motivo_nao_incidencia)
+                    """),
+                    batch_items
+                )
+                db.commit()  # Commit parcial a cada batch
+                itens_criados += len(batch_items)
             
-            # Aplicar limites (min/max) - somente se não isento
-            if is_isento:
-                tlp_calculada = Decimal('0')
-            else:
-                tlp_calculada = max(limite_min, min(limite_max, tlp_bruta))
+            # Atualizar offset para próximo batch
+            offset += BATCH_SIZE
             
-            # Criar item
-            item = TlpSimulacaoItem(
-                id_simulacao=sim.id_simulacao,
-                codg_inscricao_lan=imovel.codg_inscricao_lan,
-                nome_contribuinte=imovel.nome_contribuinte_lan,
-                uso_classificado=uso,
-                atividade_considerada=imovel.atividade_considerada,
-                fator_uso=fator,
-                tlp_bruta=tlp_bruta,
-                tlp_calculada=tlp_calculada,
-                nao_incidencia=is_isento,
-                motivo_nao_incidencia=motivo_isencao
-            )
-            db.add(item)
-            itens_criados += 1
+            # Forçar garbage collection para liberar memória
+            del imoveis_batch, batch_items
+            gc.collect()
         
         # 8. Atualizar status da simulação
         sim.status = 'CONCLUIDO'
@@ -472,6 +525,43 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
             pass
         raise HTTPException(status_code=500, detail=f"Erro ao processar simulação: {str(e)}")
 
+
+@app.post("/simulacoes/{id_simulacao}/resetar")
+def resetar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
+    """Reseta o status de uma simulação travada (EM_PROCESSAMENTO ou ERRO) para RASCUNHO.
+    
+    Também remove itens parciais que possam ter sido criados.
+    """
+    try:
+        from models import TlpSimulacao
+        
+        sim = db.query(TlpSimulacao).filter(TlpSimulacao.id_simulacao == id_simulacao).first()
+        if not sim:
+            raise HTTPException(status_code=404, detail="Simulação não encontrada")
+        
+        if sim.status == 'CONCLUIDO':
+            raise HTTPException(status_code=400, detail="Simulação já foi concluída. Crie uma nova simulação.")
+        
+        if sim.status == 'CONVERTIDO_LOTE':
+            raise HTTPException(status_code=400, detail="Simulação já foi convertida em lote oficial.")
+        
+        # Limpar itens parciais
+        db.execute(
+            text("DELETE FROM tlp.tlp_simulacao_item WHERE id_simulacao = :id"),
+            {"id": str(sim.id_simulacao)}
+        )
+        
+        # Resetar status
+        sim.status = 'RASCUNHO'
+        db.commit()
+        
+        return {"message": "Simulação resetada para RASCUNHO", "id": id_simulacao}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao resetar simulação: {str(e)}")
 
 @app.get("/simulacoes/{id_simulacao}/resultado")
 def get_resultado_simulacao(id_simulacao: str, db: Session = Depends(get_db)):

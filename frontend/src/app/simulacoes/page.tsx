@@ -195,6 +195,17 @@ export default function SimulacoesPage() {
         }
     };
 
+    const handleResetarSimulacao = async (idSimulacao: string) => {
+        if (!confirm('Deseja resetar esta simulação para RASCUNHO? Isso permitirá processá-la novamente.')) return;
+        try {
+            await api.post(`/simulacoes/${idSimulacao}/resetar`);
+            alert('Simulação resetada com sucesso!');
+            loadList();
+        } catch (err: any) {
+            alert('Erro ao resetar: ' + (err?.response?.data?.detail || err.message));
+        }
+    };
+
     const statusColor = (status: string) => {
         switch (status) {
             case 'RASCUNHO': return 'bg-gray-200 text-gray-700';
@@ -380,6 +391,18 @@ export default function SimulacoesPage() {
                                 {item.status === 'CONCLUIDO' && (
                                     <Button variant="outline" size="sm" onClick={() => handleGerarLote(item.id_simulacao)}>
                                         Gerar Lote Oficial
+                                    </Button>
+                                )}
+
+                                {/* Botão Resetar - para EM_PROCESSAMENTO ou ERRO */}
+                                {(item.status === 'EM_PROCESSAMENTO' || item.status === 'ERRO') && (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleResetarSimulacao(item.id_simulacao)}
+                                        style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                                    >
+                                        🔄 Resetar
                                     </Button>
                                 )}
 
