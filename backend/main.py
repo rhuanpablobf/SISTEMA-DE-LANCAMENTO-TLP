@@ -8,7 +8,7 @@ from pydantic import BaseModel
 import models
 from typing import Optional
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 
 # WORKAROUND: Fix para erro de UnicodeDecodeError no Windows quando o path do projeto tem acentos (LANÇAMENTO)
@@ -389,7 +389,7 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
         # Atualiza status e salva timestamp de início
         sim.status = 'EM_PROCESSAMENTO'
         params = dict(sim.parametros_snapshot or {})
-        params['inicio_processamento'] = datetime.now().isoformat()
+        params['inicio_processamento'] = datetime.now(timezone.utc).isoformat()
         sim.parametros_snapshot = params
         db.commit()
         
@@ -536,7 +536,7 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
                 # Salvar erro detalhado no snapshot para exibição posterior
                 params = dict(sim.parametros_snapshot or {})
                 params['erro_mensagem'] = str(e)
-                params['erro_timestamp'] = str(datetime.now())
+                params['erro_timestamp'] = datetime.now(timezone.utc).isoformat()
                 sim.parametros_snapshot = params
                 db.commit()
         except:
