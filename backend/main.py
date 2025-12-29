@@ -482,10 +482,10 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
                 db.execute(
                     text("""
                         INSERT INTO tlp.tlp_simulacao_item 
-                        (id_simulacao, codg_inscricao_lan, nome_contribuinte, uso_classificado, 
+                        (id_item, id_simulacao, codg_inscricao_lan, nome_contribuinte, uso_classificado, 
                          atividade_considerada, fator_uso, tlp_bruta, tlp_calculada, 
                          nao_incidencia, motivo_nao_incidencia)
-                        VALUES (:id_simulacao, :codg_inscricao_lan, :nome_contribuinte, :uso_classificado,
+                        VALUES (gen_random_uuid(), :id_simulacao, :codg_inscricao_lan, :nome_contribuinte, :uso_classificado,
                                 :atividade_considerada, :fator_uso, :tlp_bruta, :tlp_calculada,
                                 :nao_incidencia, :motivo_nao_incidencia)
                     """),
