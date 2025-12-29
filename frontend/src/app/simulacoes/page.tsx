@@ -199,7 +199,7 @@ export default function SimulacoesPage() {
                                 </div>
 
                                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                                    <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>Cancelar</Button>
+                                    <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancelar</Button>
                                     <Button type="submit">Criar Simulação</Button>
                                 </div>
                             </form>
