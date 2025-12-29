@@ -82,6 +82,21 @@ class ParametroCreate(BaseModel):
 def read_root():
     return {"message": "API Sistema TLP Online"}
 
+@app.get("/debug-db")
+def debug_db():
+    from sqlalchemy import inspect
+    from database import engine
+    try:
+        inspector = inspect(engine)
+        schemas = inspector.get_schema_names()
+        tables = []
+        for schema in schemas:
+            for table in inspector.get_table_names(schema=schema):
+                tables.append(f"{schema}.{table}")
+        return {"schemas": schemas, "tables": tables}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/health")
 def health_check(db: Session = Depends(get_db)):
     try:
@@ -129,10 +144,15 @@ def create_parametro(param: ParametroCreate, db: Session = Depends(get_db)):
         limite_max_atualizado=param.limite_max_atualizado
     )
     
-    db.add(new_param)
-    db.commit()
-    db.refresh(new_param)
-    return new_param
+    try:
+        db.add(new_param)
+        db.commit()
+        db.refresh(new_param)
+        return new_param
+    except Exception as e:
+        print(f"Error creating parametro: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar parâmetro: {str(e)}")
 
 # Simulações
 class SimulacaoCreate(BaseModel):
