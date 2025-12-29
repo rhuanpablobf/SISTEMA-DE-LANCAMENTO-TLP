@@ -124,22 +124,28 @@ def health_check(db: Session = Depends(get_db)):
 
 @app.get("/imoveis/{inscricao}")
 def get_imovel(inscricao: str, db: Session = Depends(get_db)):
-    from models import UsoImovel
-    
-    imovel = db.query(UsoImovel).filter(UsoImovel.codg_inscricao_lan == inscricao).first()
-    
-    if not imovel:
-        raise HTTPException(status_code=404, detail="Imóvel não encontrado")
+    try:
+        from models import UsoImovel
         
-    return imovel
+        imovel = db.query(UsoImovel).filter(UsoImovel.codg_inscricao_lan == inscricao).first()
+        
+        if not imovel:
+            raise HTTPException(status_code=404, detail="Imóvel não encontrado")
+            
+        return imovel
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar imóvel: {str(e)}")
 
 @app.get("/parametros")
 def get_parametros(db: Session = Depends(get_db)):
-    from models import TlpParametros
-    # Retorna o parametro ativo mais recente de cada exercício
-    # Simplificação: retorna todos ordenados por exercício desc e versão desc
-    params = db.query(TlpParametros).order_by(desc(TlpParametros.exercicio), desc(TlpParametros.versao)).all()
-    return params
+    try:
+        from models import TlpParametros
+        # Retorna o parametro ativo mais recente de cada exercício
+        # Simplificação: retorna todos ordenados por exercício desc e versão desc
+        params = db.query(TlpParametros).order_by(desc(TlpParametros.exercicio), desc(TlpParametros.versao)).all()
+        return params
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar parâmetros: {str(e)}")
 
 @app.post("/parametros")
 def create_parametro(param: ParametroCreate, db: Session = Depends(get_db)):
@@ -178,31 +184,38 @@ class SimulacaoCreate(BaseModel):
 
 @app.get("/simulacoes")
 def get_simulacoes(db: Session = Depends(get_db)):
-    from models import TlpSimulacao
-    return db.query(TlpSimulacao).order_by(desc(TlpSimulacao.created_at)).all()
+    try:
+        from models import TlpSimulacao
+        return db.query(TlpSimulacao).order_by(desc(TlpSimulacao.created_at)).all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar simulações: {str(e)}")
 
 @app.post("/simulacoes")
 def create_simulacao(sim: SimulacaoCreate, db: Session = Depends(get_db)):
-    from models import TlpSimulacao, TlpParametros
-    
-    # Busca parâmetros ativos do exercício para snapshot
-    latest_param = db.query(TlpParametros).filter(TlpParametros.exercicio == sim.exercicio).order_by(desc(TlpParametros.versao)).first()
-    
-    snapshot = {}
-    if latest_param:
-        snapshot = {
-            "custo_tlp_base": float(latest_param.custo_tlp_base),
-            "versao_parametro": latest_param.versao
-        }
-    
-    new_sim = TlpSimulacao(
-        exercicio=sim.exercicio,
-        descricao=sim.descricao,
-        status='RASCUNHO',
-        parametros_snapshot=snapshot
-    )
-    
-    db.add(new_sim)
-    db.commit()
-    db.refresh(new_sim)
-    return new_sim
+    try:
+        from models import TlpSimulacao, TlpParametros
+        
+        # Busca parâmetros ativos do exercício para snapshot
+        latest_param = db.query(TlpParametros).filter(TlpParametros.exercicio == sim.exercicio).order_by(desc(TlpParametros.versao)).first()
+        
+        snapshot = {}
+        if latest_param:
+            snapshot = {
+                "custo_tlp_base": float(latest_param.custo_tlp_base),
+                "versao_parametro": latest_param.versao
+            }
+        
+        new_sim = TlpSimulacao(
+            exercicio=sim.exercicio,
+            descricao=sim.descricao,
+            status='RASCUNHO',
+            parametros_snapshot=snapshot
+        )
+        
+        db.add(new_sim)
+        db.commit()
+        db.refresh(new_sim)
+        return new_sim
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao criar simulação: {str(e)}")
