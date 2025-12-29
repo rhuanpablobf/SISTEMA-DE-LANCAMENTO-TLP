@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '@/services/api';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -102,10 +102,25 @@ export default function SimulacoesPage() {
         setLimiteMaxAtualizado(Number((limiteMaxBase * fatorIpca).toFixed(2)));
     }, [custoBase, ipca, subsidioPerc, limiteMinBase, limiteMaxBase]);
 
+    // Estado para mensagem de erro de simulação
+    const [erroSimulacao, setErroSimulacao] = useState<{ id: string; mensagem: string } | null>(null);
+    const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const startTimeRef = useRef<number>(0);
+
     const loadList = async () => {
         try {
             const response = await api.get('/simulacoes');
             setList(response.data);
+
+            // Detectar simulação em processamento e iniciar polling
+            const emProcessamento = response.data.find((s: Simulacao) => s.status === 'EM_PROCESSAMENTO');
+            if (emProcessamento && !processingId) {
+                // Iniciar polling para esta simulação
+                setProcessingId(emProcessamento.id_simulacao);
+                setProcessing(true);
+                startTimeRef.current = Date.now();
+                iniciarPolling(emProcessamento.id_simulacao);
+            }
         } catch (err) {
             console.error(err);
         } finally {
@@ -113,8 +128,69 @@ export default function SimulacoesPage() {
         }
     };
 
+    const iniciarPolling = (idSimulacao: string) => {
+        // Limpar polling anterior
+        if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+        }
+
+        pollingRef.current = setInterval(async () => {
+            try {
+                const progressRes = await api.get(`/simulacoes/${idSimulacao}/progresso`);
+                const data = progressRes.data;
+                const elapsed = Math.round((Date.now() - startTimeRef.current) / 1000);
+
+                setProgresso({
+                    percentual: data.progresso_percentual || 0,
+                    itens: data.itens_processados || 0,
+                    total: data.total_imoveis || 0,
+                    tempo: elapsed
+                });
+
+                if (data.concluido || data.status === 'CONCLUIDO') {
+                    // Processamento concluído
+                    clearInterval(pollingRef.current!);
+                    pollingRef.current = null;
+                    setProcessing(false);
+                    setProcessingId(null);
+                    setProgresso(null);
+                    loadList();  // Recarregar lista
+
+                    // Buscar resultado
+                    const res = await api.get(`/simulacoes/${idSimulacao}/resultado`);
+                    setResultadoSimulacao(res.data);
+                    setShowResultado(true);
+                }
+
+                if (data.erro || data.status === 'ERRO') {
+                    // Erro no processamento
+                    clearInterval(pollingRef.current!);
+                    pollingRef.current = null;
+                    setProcessing(false);
+                    setProcessingId(null);
+                    setProgresso(null);
+                    setErroSimulacao({
+                        id: idSimulacao,
+                        mensagem: data.erro_mensagem || 'Erro desconhecido'
+                    });
+                    loadList();  // Recarregar lista
+                }
+            } catch (pollErr) {
+                // Ignorar erros de polling, continuar tentando
+                console.error('Erro no polling:', pollErr);
+            }
+        }, 2000);
+    };
+
     useEffect(() => {
         loadList();
+
+        // Cleanup: limpar polling ao desmontar componente
+        return () => {
+            if (pollingRef.current) {
+                clearInterval(pollingRef.current);
+            }
+        };
     }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -174,58 +250,23 @@ export default function SimulacoesPage() {
         setProcessing(true);
         setProcessingId(idSimulacao);
         setProgresso({ percentual: 0, itens: 0, total: 0, tempo: 0 });
-        const startTime = Date.now();
+        startTimeRef.current = Date.now();
+        setErroSimulacao(null);
 
         try {
             // Iniciar processamento em background (não espera terminar)
-            const processPromise = api.post(`/simulacoes/${idSimulacao}/processar`);
+            api.post(`/simulacoes/${idSimulacao}/processar`).catch(() => {
+                // Ignorar erros aqui, o polling vai detectar o status ERRO
+            });
 
-            // Polling do progresso a cada 2 segundos
-            const pollProgress = async () => {
-                while (true) {
-                    try {
-                        const progressRes = await api.get(`/simulacoes/${idSimulacao}/progresso`);
-                        const data = progressRes.data;
-                        const elapsed = Math.round((Date.now() - startTime) / 1000);
-
-                        setProgresso({
-                            percentual: data.progresso_percentual || 0,
-                            itens: data.itens_processados || 0,
-                            total: data.total_imoveis || 0,
-                            tempo: elapsed
-                        });
-
-                        if (data.concluido || data.status === 'CONCLUIDO') {
-                            break;
-                        }
-                        if (data.status === 'ERRO') {
-                            throw new Error('Processamento falhou');
-                        }
-                    } catch (pollErr) {
-                        // Ignorar erros de polling, continuar tentando
-                    }
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                }
-            };
-
-            // Rodar polling em paralelo
-            await Promise.race([
-                processPromise.then(() => pollProgress()),
-                pollProgress()
-            ]);
-
-            // Buscar resultado final
-            const res = await api.get(`/simulacoes/${idSimulacao}/resultado`);
-            setResultadoSimulacao(res.data);
-            setShowResultado(true);
-            loadList();
+            // Iniciar polling para acompanhar progresso
+            iniciarPolling(idSimulacao);
 
         } catch (err: any) {
-            alert('Erro ao processar simulação: ' + (err?.response?.data?.detail || err.message));
-        } finally {
             setProcessing(false);
             setProcessingId(null);
             setProgresso(null);
+            alert('Erro ao iniciar processamento: ' + (err?.response?.data?.detail || err.message));
         }
     };
 
@@ -450,6 +491,21 @@ export default function SimulacoesPage() {
                                     </Button>
                                 )}
 
+                                {/* Botão Ver Erro - apenas para status ERRO */}
+                                {item.status === 'ERRO' && (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setErroSimulacao({
+                                            id: item.id_simulacao,
+                                            mensagem: item.parametros_snapshot?.erro_mensagem || 'Erro desconhecido durante o processamento.'
+                                        })}
+                                        style={{ color: 'orange', borderColor: 'orange' }}
+                                    >
+                                        ⚠️ Ver Erro
+                                    </Button>
+                                )}
+
                                 <Button variant="outline" size="sm">Ver Detalhes</Button>
                             </div>
                         </div>
@@ -572,6 +628,54 @@ export default function SimulacoesPage() {
                                     </div>
                                 </div>
                             ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal de Erro */}
+            {erroSimulacao && (
+                <div style={{
+                    position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+                }}>
+                    <div style={{
+                        backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)',
+                        padding: '2rem', maxWidth: '600px', width: '90%', maxHeight: '80vh', overflow: 'auto',
+                        border: '2px solid var(--danger)'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--danger)' }}>⚠️ Erro no Processamento</h2>
+                            <Button variant="outline" size="sm" onClick={() => setErroSimulacao(null)}>Fechar</Button>
+                        </div>
+
+                        <div style={{ padding: '1rem', backgroundColor: 'var(--bg-body)', borderRadius: 'var(--radius-md)', marginBottom: '1rem' }}>
+                            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Mensagem de Erro:</p>
+                            <pre style={{
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                                fontFamily: 'monospace',
+                                fontSize: '0.875rem',
+                                color: 'var(--danger)',
+                                padding: '1rem',
+                                backgroundColor: 'rgba(255,0,0,0.05)',
+                                borderRadius: 'var(--radius-sm)',
+                                border: '1px solid var(--danger)'
+                            }}>
+                                {erroSimulacao.mensagem}
+                            </pre>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                            <Button variant="outline" onClick={() => {
+                                setErroSimulacao(null);
+                                handleResetarSimulacao(erroSimulacao.id);
+                            }}>
+                                🔄 Resetar e Tentar Novamente
+                            </Button>
+                            <Button variant="primary" onClick={() => setErroSimulacao(null)}>
+                                Entendi
+                            </Button>
                         </div>
                     </div>
                 </div>

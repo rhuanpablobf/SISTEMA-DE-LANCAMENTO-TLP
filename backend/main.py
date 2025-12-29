@@ -524,11 +524,16 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         db.rollback()
-        # Tentar reverter status
+        # Tentar reverter status e salvar mensagem de erro
         try:
             sim = db.query(TlpSimulacao).filter(TlpSimulacao.id_simulacao == id_simulacao).first()
             if sim:
                 sim.status = 'ERRO'
+                # Salvar erro detalhado no snapshot para exibição posterior
+                params = dict(sim.parametros_snapshot or {})
+                params['erro_mensagem'] = str(e)
+                params['erro_timestamp'] = str(datetime.now())
+                sim.parametros_snapshot = params
                 db.commit()
         except:
             pass
@@ -551,7 +556,10 @@ def get_progresso_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
             "progresso_percentual": params.get('progresso_percentual', 0),
             "itens_processados": params.get('itens_processados', 0),
             "total_imoveis": params.get('total_imoveis', 0),
-            "concluido": sim.status == 'CONCLUIDO'
+            "concluido": sim.status == 'CONCLUIDO',
+            "erro": sim.status == 'ERRO',
+            "erro_mensagem": params.get('erro_mensagem', None),
+            "erro_timestamp": params.get('erro_timestamp', None)
         }
         
     except HTTPException:
