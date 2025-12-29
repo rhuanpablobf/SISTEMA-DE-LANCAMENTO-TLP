@@ -161,6 +161,40 @@ export default function SimulacoesPage() {
         }
     };
 
+    // Estado para resultado da simulação processada
+    const [resultadoSimulacao, setResultadoSimulacao] = useState<any>(null);
+    const [showResultado, setShowResultado] = useState(false);
+    const [processing, setProcessing] = useState(false);
+
+    const handleProcessarSimulacao = async (idSimulacao: string) => {
+        if (!confirm('Deseja processar esta simulação e calcular a TLP para todos os imóveis?')) return;
+        setProcessing(true);
+        try {
+            // 1. Processar simulação
+            await api.post(`/simulacoes/${idSimulacao}/processar`);
+
+            // 2. Buscar resultado
+            const res = await api.get(`/simulacoes/${idSimulacao}/resultado`);
+            setResultadoSimulacao(res.data);
+            setShowResultado(true);
+            loadList();
+        } catch (err: any) {
+            alert('Erro ao processar simulação: ' + (err?.response?.data?.detail || err.message));
+        } finally {
+            setProcessing(false);
+        }
+    };
+
+    const handleVerResultado = async (idSimulacao: string) => {
+        try {
+            const res = await api.get(`/simulacoes/${idSimulacao}/resultado`);
+            setResultadoSimulacao(res.data);
+            setShowResultado(true);
+        } catch (err: any) {
+            alert('Erro ao buscar resultado: ' + (err?.response?.data?.detail || err.message));
+        }
+    };
+
     const statusColor = (status: string) => {
         switch (status) {
             case 'RASCUNHO': return 'bg-gray-200 text-gray-700';
@@ -323,11 +357,32 @@ export default function SimulacoesPage() {
                                 </p>
                             </div>
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                {item.status !== 'CONVERTIDO_LOTE' && (
+                                {/* Botão Simular Lançamento - apenas para RASCUNHO */}
+                                {item.status === 'RASCUNHO' && (
+                                    <Button
+                                        variant="primary"
+                                        size="sm"
+                                        onClick={() => handleProcessarSimulacao(item.id_simulacao)}
+                                        disabled={processing}
+                                    >
+                                        {processing ? 'Processando...' : '🚀 Simular Lançamento'}
+                                    </Button>
+                                )}
+
+                                {/* Ver Resultado - apenas para CONCLUIDO */}
+                                {item.status === 'CONCLUIDO' && (
+                                    <Button variant="primary" size="sm" onClick={() => handleVerResultado(item.id_simulacao)}>
+                                        📊 Ver Resultado
+                                    </Button>
+                                )}
+
+                                {/* Gerar Lote - para CONCLUIDO */}
+                                {item.status === 'CONCLUIDO' && (
                                     <Button variant="outline" size="sm" onClick={() => handleGerarLote(item.id_simulacao)}>
                                         Gerar Lote Oficial
                                     </Button>
                                 )}
+
                                 <Button variant="outline" size="sm">Ver Detalhes</Button>
                             </div>
                         </div>
@@ -342,6 +397,86 @@ export default function SimulacoesPage() {
                     </Card>
                 ))}
             </div>
+
+            {/* MODAL DE RESULTADO */}
+            {showResultado && resultadoSimulacao && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000
+                }}>
+                    <div style={{
+                        backgroundColor: 'white', borderRadius: 'var(--radius-lg)',
+                        padding: '2rem', maxWidth: '800px', width: '90%', maxHeight: '80vh', overflow: 'auto'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                            <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>📊 Resultado da Simulação</h2>
+                            <Button variant="outline" size="sm" onClick={() => setShowResultado(false)}>✕ Fechar</Button>
+                        </div>
+
+                        <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+                            {resultadoSimulacao.simulacao?.descricao} - Exercício {resultadoSimulacao.simulacao?.exercicio}
+                        </p>
+
+                        {/* Estatísticas Principais */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+                            <div style={{ padding: '1rem', backgroundColor: 'var(--primary-50)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Total Imóveis</p>
+                                <p style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--primary-700)' }}>
+                                    {resultadoSimulacao.estatisticas?.total_imoveis?.toLocaleString() || 0}
+                                </p>
+                            </div>
+                            <div style={{ padding: '1rem', backgroundColor: 'var(--success-bg, #ecfdf5)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Total Arrecadado</p>
+                                <p style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--success, #059669)' }}>
+                                    {formatCurrency(resultadoSimulacao.estatisticas?.total_arrecadado || 0)}
+                                </p>
+                            </div>
+                            <div style={{ padding: '1rem', backgroundColor: '#fef3c7', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Imóveis Isentos</p>
+                                <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#92400e' }}>
+                                    {resultadoSimulacao.estatisticas?.total_isentos?.toLocaleString() || 0}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Faixas de Valor */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+                            <div style={{ padding: '0.75rem', backgroundColor: 'var(--bg-body)', borderRadius: 'var(--radius-sm)' }}>
+                                <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Média TLP</p>
+                                <p style={{ fontWeight: 600 }}>{formatCurrency(resultadoSimulacao.estatisticas?.media_tlp || 0)}</p>
+                            </div>
+                            <div style={{ padding: '0.75rem', backgroundColor: 'var(--bg-body)', borderRadius: 'var(--radius-sm)' }}>
+                                <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Mínimo TLP</p>
+                                <p style={{ fontWeight: 600 }}>{formatCurrency(resultadoSimulacao.estatisticas?.min_tlp || 0)}</p>
+                            </div>
+                            <div style={{ padding: '0.75rem', backgroundColor: 'var(--bg-body)', borderRadius: 'var(--radius-sm)' }}>
+                                <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Máximo TLP</p>
+                                <p style={{ fontWeight: 600 }}>{formatCurrency(resultadoSimulacao.estatisticas?.max_tlp || 0)}</p>
+                            </div>
+                        </div>
+
+                        {/* Distribuição por Uso */}
+                        <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>Distribuição por Tipo de Uso</h3>
+                        <div style={{ display: 'grid', gap: '0.5rem' }}>
+                            {resultadoSimulacao.por_uso?.map((item: any) => (
+                                <div key={item.uso} style={{
+                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                    padding: '0.75rem', backgroundColor: 'var(--bg-body)', borderRadius: 'var(--radius-sm)'
+                                }}>
+                                    <span style={{ fontWeight: 500 }}>{item.uso || 'N/A'}</span>
+                                    <div style={{ display: 'flex', gap: '2rem' }}>
+                                        <span style={{ color: 'var(--text-secondary)' }}>{item.quantidade?.toLocaleString()} imóveis</span>
+                                        <span style={{ fontWeight: 600, color: 'var(--primary-700)' }}>{formatCurrency(item.total)}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
+

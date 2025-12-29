@@ -86,3 +86,23 @@ class TlpNaoIncidencia(Base):
     ativo = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+class TlpSimulacaoItem(Base):
+    """Resultado do cálculo TLP por imóvel em uma simulação."""
+    __tablename__ = 'tlp_simulacao_item'
+    __table_args__ = {'schema': 'tlp'}
+
+    id_item = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id_simulacao = Column(UUID(as_uuid=True), nullable=False, index=True)
+    codg_inscricao_lan = Column(String, nullable=False, index=True)
+    nome_contribuinte = Column(String)
+    uso_classificado = Column(String)
+    atividade_considerada = Column(String)
+    fator_uso = Column(Numeric(5, 2), default=1.0)
+    tlp_bruta = Column(Numeric(18, 2))
+    tlp_calculada = Column(Numeric(18, 2))
+    nao_incidencia = Column(Boolean, default=False)
+    motivo_nao_incidencia = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+

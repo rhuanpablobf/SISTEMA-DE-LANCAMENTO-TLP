@@ -337,3 +337,202 @@ def create_nao_incidencia(ni: NaoIncidenciaCreate, db: Session = Depends(get_db)
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Erro ao criar não incidência: {str(e)}")
+
+
+# ============== PROCESSAMENTO DE SIMULAÇÃO (CÁLCULO TLP) ==============
+
+# Fatores por tipo de uso
+FATORES_USO = {
+    'RESIDENCIAL': 1.0,
+    'SERVICO': 1.2,
+    'COMERCIO': 1.5,
+    'INDUSTRIA': 2.0,
+    'PUBLICO/FILANTROPICO': 0,
+    'PUBLICO': 0,
+    'FILANTROPICO': 0
+}
+
+@app.post("/simulacoes/{id_simulacao}/processar")
+def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
+    """Processa a simulação: calcula TLP para cada imóvel e salva os resultados."""
+    try:
+        from models import TlpSimulacao, TlpSimulacaoItem, TlpNaoIncidencia, UsoImovel
+        from decimal import Decimal
+        
+        # 1. Buscar simulação
+        sim = db.query(TlpSimulacao).filter(TlpSimulacao.id_simulacao == id_simulacao).first()
+        if not sim:
+            raise HTTPException(status_code=404, detail="Simulação não encontrada")
+        
+        if sim.status == 'CONCLUIDO':
+            raise HTTPException(status_code=400, detail="Simulação já foi processada")
+        
+        # Atualiza status
+        sim.status = 'EM_PROCESSAMENTO'
+        db.commit()
+        
+        # 2. Extrair parâmetros do snapshot
+        params = sim.parametros_snapshot or {}
+        custo_final = Decimal(str(params.get('custo_final', 0) or params.get('custo_tlp_base', 0)))
+        limite_min = Decimal(str(params.get('limite_min_atualizado', 258)))
+        limite_max = Decimal(str(params.get('limite_max_atualizado', 1600.08)))
+        exercicio = sim.exercicio
+        
+        # 3. Buscar não incidências do exercício
+        nao_incidencias = db.query(TlpNaoIncidencia).filter(
+            TlpNaoIncidencia.exercicio == exercicio,
+            TlpNaoIncidencia.ativo == True
+        ).all()
+        inscricoes_isentas = {ni.codg_inscricao_lan: ni.motivo for ni in nao_incidencias}
+        
+        # 4. Buscar todos os imóveis da view
+        imoveis = db.query(UsoImovel).all()
+        total_imoveis = len(imoveis)
+        
+        if total_imoveis == 0:
+            raise HTTPException(status_code=400, detail="Nenhum imóvel encontrado na base")
+        
+        # 5. Calcular TLP base por imóvel
+        # Fórmula: TLP_Bruta = Custo_Final / Total_Imoveis (distribuição uniforme)
+        tlp_base_por_imovel = custo_final / Decimal(total_imoveis)
+        
+        # 6. Limpar itens anteriores (se reprocessando)
+        db.query(TlpSimulacaoItem).filter(TlpSimulacaoItem.id_simulacao == sim.id_simulacao).delete()
+        
+        # 7. Calcular e inserir itens
+        itens_criados = 0
+        for imovel in imoveis:
+            uso = (imovel.uso_classificado or 'RESIDENCIAL').upper()
+            fator = Decimal(str(FATORES_USO.get(uso, 1.0)))
+            
+            # TLP Bruta = Base × Fator
+            tlp_bruta = tlp_base_por_imovel * fator
+            
+            # Verificar não incidência
+            is_isento = imovel.codg_inscricao_lan in inscricoes_isentas
+            motivo_isencao = inscricoes_isentas.get(imovel.codg_inscricao_lan) if is_isento else None
+            
+            # Verificar se uso é público (isento por padrão)
+            if uso in ['PUBLICO', 'FILANTROPICO', 'PUBLICO/FILANTROPICO']:
+                is_isento = True
+                motivo_isencao = motivo_isencao or 'PROPRIEDADE PÚBLICA/FILANTRÓPICA'
+            
+            # Aplicar limites (min/max) - somente se não isento
+            if is_isento:
+                tlp_calculada = Decimal('0')
+            else:
+                tlp_calculada = max(limite_min, min(limite_max, tlp_bruta))
+            
+            # Criar item
+            item = TlpSimulacaoItem(
+                id_simulacao=sim.id_simulacao,
+                codg_inscricao_lan=imovel.codg_inscricao_lan,
+                nome_contribuinte=imovel.nome_contribuinte_lan,
+                uso_classificado=uso,
+                atividade_considerada=imovel.atividade_considerada,
+                fator_uso=fator,
+                tlp_bruta=tlp_bruta,
+                tlp_calculada=tlp_calculada,
+                nao_incidencia=is_isento,
+                motivo_nao_incidencia=motivo_isencao
+            )
+            db.add(item)
+            itens_criados += 1
+        
+        # 8. Atualizar status da simulação
+        sim.status = 'CONCLUIDO'
+        db.commit()
+        
+        return {
+            "message": "Simulação processada com sucesso",
+            "total_imoveis": total_imoveis,
+            "itens_criados": itens_criados
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        # Tentar reverter status
+        try:
+            sim = db.query(TlpSimulacao).filter(TlpSimulacao.id_simulacao == id_simulacao).first()
+            if sim:
+                sim.status = 'ERRO'
+                db.commit()
+        except:
+            pass
+        raise HTTPException(status_code=500, detail=f"Erro ao processar simulação: {str(e)}")
+
+
+@app.get("/simulacoes/{id_simulacao}/resultado")
+def get_resultado_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
+    """Retorna estatísticas do resultado da simulação."""
+    try:
+        from models import TlpSimulacao, TlpSimulacaoItem
+        from sqlalchemy import func as sqlfunc
+        
+        # Verificar se simulação existe
+        sim = db.query(TlpSimulacao).filter(TlpSimulacao.id_simulacao == id_simulacao).first()
+        if not sim:
+            raise HTTPException(status_code=404, detail="Simulação não encontrada")
+        
+        # Estatísticas gerais
+        stats = db.query(
+            sqlfunc.count(TlpSimulacaoItem.id_item).label('total_imoveis'),
+            sqlfunc.sum(TlpSimulacaoItem.tlp_calculada).label('total_arrecadado'),
+            sqlfunc.avg(TlpSimulacaoItem.tlp_calculada).label('media_tlp'),
+            sqlfunc.min(TlpSimulacaoItem.tlp_calculada).label('min_tlp'),
+            sqlfunc.max(TlpSimulacaoItem.tlp_calculada).label('max_tlp'),
+            sqlfunc.sum(sqlfunc.cast(TlpSimulacaoItem.nao_incidencia, Integer)).label('total_isentos')
+        ).filter(TlpSimulacaoItem.id_simulacao == id_simulacao).first()
+        
+        # Distribuição por uso
+        por_uso = db.query(
+            TlpSimulacaoItem.uso_classificado,
+            sqlfunc.count(TlpSimulacaoItem.id_item).label('quantidade'),
+            sqlfunc.sum(TlpSimulacaoItem.tlp_calculada).label('total')
+        ).filter(
+            TlpSimulacaoItem.id_simulacao == id_simulacao
+        ).group_by(TlpSimulacaoItem.uso_classificado).all()
+        
+        return {
+            "simulacao": {
+                "id": str(sim.id_simulacao),
+                "exercicio": sim.exercicio,
+                "descricao": sim.descricao,
+                "status": sim.status,
+                "parametros": sim.parametros_snapshot
+            },
+            "estatisticas": {
+                "total_imoveis": stats.total_imoveis or 0,
+                "total_arrecadado": float(stats.total_arrecadado or 0),
+                "media_tlp": float(stats.media_tlp or 0),
+                "min_tlp": float(stats.min_tlp or 0),
+                "max_tlp": float(stats.max_tlp or 0),
+                "total_isentos": stats.total_isentos or 0
+            },
+            "por_uso": [
+                {"uso": row.uso_classificado, "quantidade": row.quantidade, "total": float(row.total or 0)}
+                for row in por_uso
+            ]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar resultado: {str(e)}")
+
+
+@app.get("/simulacoes/{id_simulacao}/itens")
+def get_itens_simulacao(id_simulacao: str, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    """Lista itens calculados de uma simulação (paginado)."""
+    try:
+        from models import TlpSimulacaoItem
+        
+        itens = db.query(TlpSimulacaoItem).filter(
+            TlpSimulacaoItem.id_simulacao == id_simulacao
+        ).order_by(TlpSimulacaoItem.tlp_calculada.desc()).offset(skip).limit(limit).all()
+        
+        return itens
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar itens: {str(e)}")
+
