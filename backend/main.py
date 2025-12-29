@@ -405,7 +405,7 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
         del nao_incidencias_result  # Liberar memória
         
         # 4. Contar total de imóveis (sem carregar na memória)
-        total_imoveis = db.execute(text("SELECT COUNT(*) FROM base.uso_imovel")).scalar()
+        total_imoveis = db.execute(text("SELECT COUNT(*) FROM tlp.vw_uso_imovel_por_inscricao")).scalar()
         
         if total_imoveis == 0:
             raise HTTPException(status_code=400, detail="Nenhum imóvel encontrado na base")
@@ -429,7 +429,7 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
             imoveis_batch = db.execute(
                 text("""
                     SELECT codg_inscricao_lan, nome_contribuinte_lan, uso_classificado, atividade_considerada
-                    FROM base.uso_imovel
+                    FROM tlp.vw_uso_imovel_por_inscricao
                     ORDER BY codg_inscricao_lan
                     LIMIT :limit OFFSET :offset
                 """),
@@ -497,6 +497,15 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
             # Atualizar offset para próximo batch
             offset += BATCH_SIZE
             
+            # Atualizar progresso na simulação
+            percentual = min(100, int((itens_criados / total_imoveis) * 100))
+            params_atualizado = dict(params)
+            params_atualizado['progresso_percentual'] = percentual
+            params_atualizado['itens_processados'] = itens_criados
+            params_atualizado['total_imoveis'] = total_imoveis
+            sim.parametros_snapshot = params_atualizado
+            db.commit()
+            
             # Forçar garbage collection para liberar memória
             del imoveis_batch, batch_items
             gc.collect()
@@ -525,6 +534,30 @@ def processar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
             pass
         raise HTTPException(status_code=500, detail=f"Erro ao processar simulação: {str(e)}")
 
+
+@app.get("/simulacoes/{id_simulacao}/progresso")
+def get_progresso_simulacao(id_simulacao: str, db: Session = Depends(get_db)):
+    """Retorna o progresso atual do processamento de uma simulação."""
+    try:
+        from models import TlpSimulacao
+        
+        sim = db.query(TlpSimulacao).filter(TlpSimulacao.id_simulacao == id_simulacao).first()
+        if not sim:
+            raise HTTPException(status_code=404, detail="Simulação não encontrada")
+        
+        params = sim.parametros_snapshot or {}
+        return {
+            "status": sim.status,
+            "progresso_percentual": params.get('progresso_percentual', 0),
+            "itens_processados": params.get('itens_processados', 0),
+            "total_imoveis": params.get('total_imoveis', 0),
+            "concluido": sim.status == 'CONCLUIDO'
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar progresso: {str(e)}")
 
 @app.post("/simulacoes/{id_simulacao}/resetar")
 def resetar_simulacao(id_simulacao: str, db: Session = Depends(get_db)):

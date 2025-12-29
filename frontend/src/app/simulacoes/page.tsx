@@ -165,23 +165,67 @@ export default function SimulacoesPage() {
     const [resultadoSimulacao, setResultadoSimulacao] = useState<any>(null);
     const [showResultado, setShowResultado] = useState(false);
     const [processing, setProcessing] = useState(false);
+    const [progresso, setProgresso] = useState<{ percentual: number; itens: number; total: number; tempo: number } | null>(null);
+    const [processingId, setProcessingId] = useState<string | null>(null);
 
     const handleProcessarSimulacao = async (idSimulacao: string) => {
-        if (!confirm('Deseja processar esta simulação e calcular a TLP para todos os imóveis?')) return;
-        setProcessing(true);
-        try {
-            // 1. Processar simulação
-            await api.post(`/simulacoes/${idSimulacao}/processar`);
+        if (!confirm('Deseja processar esta simulação e calcular a TLP para todos os imóveis? Isso pode levar alguns minutos.')) return;
 
-            // 2. Buscar resultado
+        setProcessing(true);
+        setProcessingId(idSimulacao);
+        setProgresso({ percentual: 0, itens: 0, total: 0, tempo: 0 });
+        const startTime = Date.now();
+
+        try {
+            // Iniciar processamento em background (não espera terminar)
+            const processPromise = api.post(`/simulacoes/${idSimulacao}/processar`);
+
+            // Polling do progresso a cada 2 segundos
+            const pollProgress = async () => {
+                while (true) {
+                    try {
+                        const progressRes = await api.get(`/simulacoes/${idSimulacao}/progresso`);
+                        const data = progressRes.data;
+                        const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+                        setProgresso({
+                            percentual: data.progresso_percentual || 0,
+                            itens: data.itens_processados || 0,
+                            total: data.total_imoveis || 0,
+                            tempo: elapsed
+                        });
+
+                        if (data.concluido || data.status === 'CONCLUIDO') {
+                            break;
+                        }
+                        if (data.status === 'ERRO') {
+                            throw new Error('Processamento falhou');
+                        }
+                    } catch (pollErr) {
+                        // Ignorar erros de polling, continuar tentando
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+            };
+
+            // Rodar polling em paralelo
+            await Promise.race([
+                processPromise.then(() => pollProgress()),
+                pollProgress()
+            ]);
+
+            // Buscar resultado final
             const res = await api.get(`/simulacoes/${idSimulacao}/resultado`);
             setResultadoSimulacao(res.data);
             setShowResultado(true);
             loadList();
+
         } catch (err: any) {
             alert('Erro ao processar simulação: ' + (err?.response?.data?.detail || err.message));
         } finally {
             setProcessing(false);
+            setProcessingId(null);
+            setProgresso(null);
         }
     };
 
@@ -417,6 +461,39 @@ export default function SimulacoesPage() {
                             <span>Limite Min: <strong>{formatCurrency(Number(item.parametros_snapshot?.limite_min_atualizado || 0))}</strong></span>
                             <span>Limite Max: <strong>{formatCurrency(Number(item.parametros_snapshot?.limite_max_atualizado || 0))}</strong></span>
                         </div>
+
+                        {/* Barra de Progresso - exibido apenas durante processamento */}
+                        {processingId === item.id_simulacao && progresso && (
+                            <div style={{ marginTop: '1rem', padding: '1rem', background: 'linear-gradient(135deg, var(--primary-light) 0%, var(--bg-body) 100%)', borderRadius: 'var(--radius-md)', border: '1px solid var(--primary)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                    <span style={{ fontWeight: 600, color: 'var(--primary)' }}>
+                                        ⏳ Processando Simulação...
+                                    </span>
+                                    <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                                        {progresso.tempo}s decorridos
+                                    </span>
+                                </div>
+                                <div style={{
+                                    width: '100%',
+                                    height: '8px',
+                                    backgroundColor: 'var(--bg-body)',
+                                    borderRadius: '4px',
+                                    overflow: 'hidden'
+                                }}>
+                                    <div style={{
+                                        width: `${progresso.percentual}%`,
+                                        height: '100%',
+                                        backgroundColor: 'var(--primary)',
+                                        borderRadius: '4px',
+                                        transition: 'width 0.3s ease'
+                                    }} />
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                                    <span>{progresso.itens.toLocaleString()} / {progresso.total.toLocaleString()} imóveis</span>
+                                    <span style={{ fontWeight: 600, color: 'var(--primary)' }}>{progresso.percentual}%</span>
+                                </div>
+                            </div>
+                        )}
                     </Card>
                 ))}
             </div>
