@@ -19,7 +19,11 @@ app = FastAPI(title="API Sistema TLP")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://tlp-front.onrender.com",
+        "https://sistema-de-lancamento-tlp.onrender.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
